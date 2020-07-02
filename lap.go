@@ -36,6 +36,11 @@ type Event struct {
 	Responses       []string `json:"responses" xml:"Responses>Response"`
 	Duration        int      `json:"duration,omitempty" xml:"Duration,omitempty"`
 	ConnTime        string   `json:"-" xml:"-"`
+	ErrCode         int      `json:"errcode" xml:"err"`
+	Tag             int      `json:"tag,omitempty" xml:"tag,omitempty"`
+	Nentries        int      `json:"nentries,omitempty" xml:"nentries,omitempty"`
+	Etime           string   `json:"etime,omitempty" xml:"etime,omitempty"`
+	RetMsg          string   `json:"message,omitempty" xml:"message,omitempty"`
 }
 
 type config struct {
@@ -57,12 +62,17 @@ var bindDNMatch = `dn=\"(?P<dn>.+)\"`
 var connectionClosedMatch = ` closed `
 var sslCipherMatch = `SSL (?P<strength>.*)-bit (?P<cipher>.*)`
 
+var resultMatch = `err=(?P<errcode>\d+) tag=(?P<tag>\d+) nentries=(?P<nentries>\d+) etime=(?P<etime>\d+\.\d+)(?:" "|(?P<detail>.*))`
+
+// var resultMatch = `(?P<detail>.*)`
+
 var lineRe *regexp.Regexp
 var connectionOpenRe *regexp.Regexp
 var operationRe *regexp.Regexp
 var bindDNRe *regexp.Regexp
 var connectionClosedRe *regexp.Regexp
 var sslCipherRe *regexp.Regexp
+var resultRe *regexp.Regexp
 
 func check(e error) {
 	if e != nil {
@@ -140,6 +150,7 @@ func (c config) parseFile(ac map[int]Event, f string) map[int]Event {
 	//loop through file contents
 	for line := range t.Lines {
 		var lineMap map[string]string
+		var resultMap map[string]string
 		var ok bool
 		if lineMap, ok = matchLine(lineRe, line.Text); !ok {
 			continue
@@ -214,7 +225,28 @@ func (c config) parseFile(ac map[int]Event, f string) map[int]Event {
 					conn.Requests = append(conn.Requests, operationMap["operation"]+operationMap["details"])
 				} else {
 					conn.Responses = append(conn.Responses, operationMap["operation"]+operationMap["details"])
+					if operationMap["operation"] == "RESULT" {
+						if resultMap, ok = matchLine(resultRe, operationMap["details"]); ok {
+							errcode, err := strconv.Atoi(resultMap["errcode"])
+							if err != nil {
+								fmt.Printf("failed to parse '%s' into int\n", resultMap["errcode"])
+							}
+							conn.ErrCode = errcode
+							tag, err := strconv.Atoi(resultMap["tag"])
+							if err != nil {
+								fmt.Printf("failed to parse '%s' into int\n", resultMap["tag"])
+							}
+							conn.Tag = tag
+							nentries, err := strconv.Atoi(resultMap["nentries"])
+							if err != nil {
+								fmt.Printf("failed to parse '%s' into int\n", resultMap["nentries"])
+							}
+							conn.Nentries = nentries
+							conn.Etime = resultMap["etime"]
+							conn.RetMsg = resultMap["detail"]
+						}
 
+					}
 					c.printEvent(conn)
 					conn.Operation = -2
 				}
@@ -237,6 +269,7 @@ func compileRegexes() {
 	bindDNRe = regexp.MustCompile(bindDNMatch)
 	connectionClosedRe = regexp.MustCompile(connectionClosedMatch)
 	sslCipherRe = regexp.MustCompile(sslCipherMatch)
+	resultRe = regexp.MustCompile(resultMatch)
 }
 
 func main() {
